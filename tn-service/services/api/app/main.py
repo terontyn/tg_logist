@@ -95,6 +95,7 @@ def build_edit_kb(doc_id):
     return {"inline_keyboard": [
         [{"text": "Наименование перевозчика", "callback_data": f"field:{doc_id}:carrier_name"}],
         [{"text": "Грузоотправитель", "callback_data": f"field:{doc_id}:sender_address"}],
+        [{"text": "Локация выгрузки", "callback_data": f"field:{doc_id}:unloading_location"}],
         [{"text": "Дата погрузки", "callback_data": f"field:{doc_id}:loading_date"}],
         [{"text": "ФИО водителя", "callback_data": f"field:{doc_id}:driver_name"}],
         [{"text": "Вес (кг)", "callback_data": f"field:{doc_id}:weight_kg"}],
@@ -112,7 +113,13 @@ def handle_callback(chat_id, data, callback_id, mid):
         
     elif data.startswith("field:"):
         _, did, field = data.split(":")
-        EDIT_STATE[chat_id] = {"doc_id": int(did), "field": field, "original_mid": mid, "prompt_mid": send_max_message(chat_id, "🚚 Введите Перевозчика:" if field == "carrier_name" else "✍️ Введите новое значение:")}
+        if field == "carrier_name":
+            prompt = "🚚 Введите Перевозчика:"
+        elif field == "unloading_location":
+            prompt = "📍 Введите локацию выгрузки:"
+        else:
+            prompt = "✍️ Введите новое значение:"
+        EDIT_STATE[chat_id] = {"doc_id": int(did), "field": field, "original_mid": mid, "prompt_mid": send_max_message(chat_id, prompt)}
         
     elif data.startswith("back:"):
         doc_id = int(data.split(":")[1])

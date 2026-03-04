@@ -7,6 +7,7 @@ def _g(d, *path, default="—"):
 def format_for_driver(doc_id: int, data: dict, ok: bool, reason: str, conf: float) -> str:
     addr    = _g(data, "sender_address", "value")
     date    = _g(data, "loading_date", "value")
+    unload  = _g(data, "unloading_location", "value")
     carrier = _g(data, "carrier_name", "value") # Тут всегда будет null из OCR
     driver  = _g(data, "driver_name", "value")
     kg      = _g(data, "weight_total", "kg")
@@ -15,6 +16,7 @@ def format_for_driver(doc_id: int, data: dict, ok: bool, reason: str, conf: floa
     lines = [f"✅ Накладная #{doc_id}", ""]
     lines.append(f"Грузоотправитель: {addr}")
     lines.append(f"Дата погрузки: {date}")
+    lines.append(f"Локация выгрузки: {unload}")
     lines.append(f"Наименование перевозчика — {carrier}")
     lines.append(f"ФИО водителя: {driver}")
     lines.append(f"Вес продукции: {kg} кг" if kg != "—" else "Вес продукции: —")

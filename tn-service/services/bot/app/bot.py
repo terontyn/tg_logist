@@ -25,6 +25,7 @@ def build_edit_kb(doc_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Наименование перевозчика", callback_data=f"field:{doc_id}:carrier_name")],
         [InlineKeyboardButton("Грузоотправитель", callback_data=f"field:{doc_id}:sender_address")],
+        [InlineKeyboardButton("Локация выгрузки", callback_data=f"field:{doc_id}:unloading_location")],
         [InlineKeyboardButton("Дата погрузки", callback_data=f"field:{doc_id}:loading_date")],
         [InlineKeyboardButton("ФИО водителя", callback_data=f"field:{doc_id}:driver_name")],
         [InlineKeyboardButton("Вес (кг)", callback_data=f"field:{doc_id}:weight_kg")],
@@ -81,7 +82,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("field:"):
         _, did, field = data.split(":")
         EDIT_STATE[chat_id] = {"doc_id": int(did), "field": field}
-        txt = "🚚 Введите Перевозчика:" if field == "carrier_name" else "Введите новое значение:"
+        if field == "carrier_name":
+            txt = "🚚 Введите Перевозчика:"
+        elif field == "unloading_location":
+            txt = "📍 Введите локацию выгрузки:"
+        else:
+            txt = "Введите новое значение:"
         await context.bot.send_message(chat_id, txt)
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
