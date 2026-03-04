@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-import json, redis, os, requests, threading, time, traceback, logging
+import json, redis, os, requests, threading, time
+from concurrent.futures import ThreadPoolExecutor
 from app.db import get_doc, update_field, add_operation_event, remove_last_operation_event, clear_operation_events
 from app.formatting import format_for_driver
 
@@ -17,6 +18,7 @@ EDIT_STATE = {}
 
 FILE_BUFFER = {}
 BUFFER_LOCK = threading.Lock()
+CALLBACK_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("MAX_CALLBACK_WORKERS", "8")))
 
 
 def flush_buffer(chat_id):
@@ -124,7 +126,7 @@ def answer_max_callback(callback_id):
     if not callback_id:
         return
     try:
-        requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json={}, headers=HEADERS, timeout=5)
+        requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json={}, headers=HEADERS, timeout=1.5)
     except Exception:
         pass
 
@@ -391,11 +393,7 @@ def process_update(update):
     if update_type == "message_callback":
         chat_id, payload, callback_id, mid = _extract_callback_meta(update)
         if chat_id and payload:
-            threading.Thread(
-                target=handle_callback,
-                args=(chat_id, payload, callback_id, mid),
-                daemon=True,
-            ).start()
+            CALLBACK_EXECUTOR.submit(handle_callback, chat_id, payload, callback_id, mid)
         else:
             print(f"⚠️ Ignored callback update with missing data: {update}", flush=True)
         return
@@ -468,16 +466,16 @@ def polling_loop():
                 data = resp.json()
                 if "marker" in data:
                     marker = data["marker"]
-                updates = data.get("updates", [])
-                if updates:
-                    print(f"📥 [DEBUG] Пришло {len(updates)} апдейтов", flush=True)
-                for u in updates:
-                    process_update(u)
+                for u in data.get("updates", []):
+                    try:
+                        process_update(u)
+                    except Exception as exc:
+                        print(f"❌ Failed to process update: {exc}; update={u}", flush=True)
             else:
                 print(f"⚠️ [DEBUG] Ошибка polling: {resp.status_code} {resp.text}", flush=True)
                 time.sleep(2)
-        except Exception as e:
-            print(f"❌ [DEBUG] Исключение в polling: {e}", flush=True)
+        except Exception as exc:
+            print(f"❌ Polling loop error: {exc}", flush=True)
             time.sleep(5)
 
 
