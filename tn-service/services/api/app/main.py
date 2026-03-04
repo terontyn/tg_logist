@@ -171,7 +171,7 @@ def build_op_kb(doc_id):
 
 def build_unload_kb(doc_id):
     suggestions = _suggest_values(doc_id, "unloading_address")
-    rows = [[{"text": f"📍 {x}", "callback_data": f"set_unload:{doc_id}:{x}"}] for x in suggestions]
+    rows = [[{"text": f"📍 {x}", "callback_data": f"set_unload:{doc_id}:{idx}"}] for idx, x in enumerate(suggestions)]
     rows.append([{"text": "✍️ Свой вариант", "callback_data": f"field:{doc_id}:unloading_address"}])
     rows.append([{"text": "⬅️ Назад", "callback_data": f"back:{doc_id}"}])
     return {"inline_keyboard": rows}
@@ -179,7 +179,7 @@ def build_unload_kb(doc_id):
 
 def build_carrier_kb(doc_id):
     suggestions = _suggest_values(doc_id, "carrier_name")
-    rows = [[{"text": f"🚚 {x}", "callback_data": f"set_carrier:{doc_id}:{x}"}] for x in suggestions]
+    rows = [[{"text": f"🚚 {x}", "callback_data": f"set_carrier:{doc_id}:{idx}"}] for idx, x in enumerate(suggestions)]
     rows.append([{"text": "✍️ Свой вариант", "callback_data": f"field:{doc_id}:carrier_name"}])
     rows.append([{"text": "⬅️ Назад", "callback_data": f"back:{doc_id}"}])
     return {"inline_keyboard": rows}
@@ -240,14 +240,26 @@ def handle_callback(chat_id, data, callback_id, mid):
         _show_message(chat_id, mid, "👇 Выберите наименование перевозчика или введите своё:", build_carrier_kb(doc_id))
 
     elif data.startswith("set_unload:"):
-        _, did, value = data.split(":", 2)
+        _, did, raw_idx = data.split(":", 2)
         doc_id = int(did)
+        suggestions = _suggest_values(doc_id, "unloading_address")
+        try:
+            value = suggestions[int(raw_idx)]
+        except (ValueError, IndexError):
+            _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_unload_kb(doc_id))
+            return
         update_field(doc_id, "unloading_address", value)
         _render_doc(chat_id, doc_id, mid)
 
     elif data.startswith("set_carrier:"):
-        _, did, value = data.split(":", 2)
+        _, did, raw_idx = data.split(":", 2)
         doc_id = int(did)
+        suggestions = _suggest_values(doc_id, "carrier_name")
+        try:
+            value = suggestions[int(raw_idx)]
+        except (ValueError, IndexError):
+            _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_carrier_kb(doc_id))
+            return
         update_field(doc_id, "carrier_name", value)
         _render_doc(chat_id, doc_id, mid)
 
