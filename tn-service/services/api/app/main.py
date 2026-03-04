@@ -1,7 +1,11 @@
 from fastapi import FastAPI
-import json, redis, os, requests, threading, time
+import json, redis, os, requests, threading, time, traceback, logging
 from app.db import get_doc, update_field, add_operation_event, remove_last_operation_event, clear_operation_events
 from app.formatting import format_for_driver
+
+# Включаем логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("max_handler")
 
 app = FastAPI(title="TN Service Polling")
 rds = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
@@ -23,7 +27,7 @@ def flush_buffer(chat_id):
     files = data["files"]
     if not files:
         return
-    print(f"📦 Буфер сброшен. Файлов: {len(files)}", flush=True)
+    print(f"📦 [DEBUG] Буфер сброшен для {chat_id}. Файлов: {len(files)}", flush=True)
     rds.rpush("tasks", json.dumps({"type": "batch", "platform": "max", "chat_id": str(chat_id), "files": files}))
     send_max_message(chat_id, f"📥 Принято файлов: {len(files)}. Обрабатываю...")
 
@@ -59,7 +63,6 @@ def _extract_mid(resp_json):
     for key in ("message_id", "mid"):
         if resp_json.get(key):
             return resp_json.get(key)
-
     result = resp_json.get("result")
     if isinstance(result, dict):
         if result.get("message_id"):
@@ -67,7 +70,6 @@ def _extract_mid(resp_json):
         body = result.get("body")
         if isinstance(body, dict) and body.get("mid"):
             return body.get("mid")
-
     message = resp_json.get("message")
     if isinstance(message, dict):
         body = message.get("body")
@@ -82,24 +84,31 @@ def send_max_message(chat_id, text, reply_markup=None):
     if atts:
         body["attachments"] = atts
     try:
+        print(f"📤 [DEBUG] Отправка сообщения в {chat_id}: {text[:20]}...", flush=True)
         resp = requests.post(f"{MAX_API_URL}/messages", params={"chat_id": chat_id}, json=body, headers=HEADERS, timeout=20)
+        if not resp.ok:
+            print(f"❌ [DEBUG] Ошибка отправки MAX: {resp.status_code} {resp.text}", flush=True)
         if resp.ok:
             return _extract_mid(resp.json())
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ [DEBUG] Исключение отправки MAX: {e}", flush=True)
     return None
 
 
 def edit_max_message(mid, text, reply_markup=None):
     if not mid:
+        print("⚠️ [DEBUG] edit_max_message вызван без mid", flush=True)
         return
     body = {"text": text}
     atts = convert_kb(reply_markup)
     body["attachments"] = atts if atts else []
     try:
-        requests.put(f"{MAX_API_URL}/messages", params={"message_id": mid}, json=body, headers=HEADERS, timeout=20)
-    except Exception:
-        pass
+        print(f"📤 [DEBUG] Редактирование сообщения {mid}...", flush=True)
+        resp = requests.put(f"{MAX_API_URL}/messages", params={"message_id": mid}, json=body, headers=HEADERS, timeout=20)
+        if not resp.ok:
+            print(f"❌ [DEBUG] Ошибка редактирования MAX: {resp.status_code} {resp.text}", flush=True)
+    except Exception as e:
+        print(f"❌ [DEBUG] Исключение редактирования MAX: {e}", flush=True)
 
 
 def delete_max_message(mid):
@@ -120,33 +129,34 @@ def answer_max_callback(callback_id):
         pass
 
 
-
-
 def _suggest_values(doc_id, field):
-    doc = get_doc(doc_id) or {}
-    ocr = doc.get("ocr_data") or {}
-    values = []
+    try:
+        doc = get_doc(doc_id) or {}
+        ocr = doc.get("ocr_data") or {}
+        values = []
 
-    ai_suggestions = ocr.get("ai_suggestions") if isinstance(ocr, dict) else None
-    if isinstance(ai_suggestions, dict):
-        ai_val = ai_suggestions.get(field)
-        if ai_val and str(ai_val).strip() and str(ai_val).strip() not in ("—", "None"):
-            values.append(str(ai_val).strip())
+        ai_suggestions = ocr.get("ai_suggestions") if isinstance(ocr, dict) else None
+        if isinstance(ai_suggestions, dict):
+            ai_val = ai_suggestions.get(field)
+            if ai_val and str(ai_val).strip() and str(ai_val).strip() not in ("—", "None"):
+                values.append(str(ai_val).strip())
 
-    # Backward compatibility для старых документов, где ai_suggestions еще нет.
-    if not values:
-        cur = ocr.get(field, {})
-        val = cur.get("value") if isinstance(cur, dict) else None
-        if val and str(val).strip() and str(val).strip() not in ("—", "None"):
-            values.append(str(val).strip())
+        if not values:
+            cur = ocr.get(field, {})
+            val = cur.get("value") if isinstance(cur, dict) else None
+            if val and str(val).strip() and str(val).strip() not in ("—", "None"):
+                values.append(str(val).strip())
 
-    seen = set()
-    out = []
-    for v in values:
-        if v not in seen:
-            seen.add(v)
-            out.append(v)
-    return out
+        seen = set()
+        out = []
+        for v in values:
+            if v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
+    except Exception as e:
+        print(f"❌ [DEBUG] Ошибка в _suggest_values: {e}", flush=True)
+        return []
 
 def build_main_kb(doc_id):
     return {"inline_keyboard": [
@@ -375,7 +385,9 @@ def _extract_callback_meta(update):
     return chat_id, payload, callback_id, mid
 
 def process_update(update):
+    print(f"🔍 [DEBUG] Получен апдейт: {json.dumps(update, ensure_ascii=False)}", flush=True)
     update_type = update.get("update_type")
+    
     if update_type == "message_callback":
         chat_id, payload, callback_id, mid = _extract_callback_meta(update)
         if chat_id and payload:
@@ -448,6 +460,7 @@ def process_update(update):
 
 def polling_loop():
     marker = None
+    print("🚀 [DEBUG] Polling loop started... (API RESTARTED)", flush=True)
     while True:
         try:
             resp = requests.get(f"{MAX_API_URL}/updates", headers=HEADERS, params={"marker": marker} if marker else {}, timeout=60)
@@ -455,11 +468,16 @@ def polling_loop():
                 data = resp.json()
                 if "marker" in data:
                     marker = data["marker"]
-                for u in data.get("updates", []):
+                updates = data.get("updates", [])
+                if updates:
+                    print(f"📥 [DEBUG] Пришло {len(updates)} апдейтов", flush=True)
+                for u in updates:
                     process_update(u)
             else:
+                print(f"⚠️ [DEBUG] Ошибка polling: {resp.status_code} {resp.text}", flush=True)
                 time.sleep(2)
-        except Exception:
+        except Exception as e:
+            print(f"❌ [DEBUG] Исключение в polling: {e}", flush=True)
             time.sleep(5)
 
 
