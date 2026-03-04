@@ -181,12 +181,7 @@ def build_op_kb(doc_id):
 
 def build_unload_kb(doc_id):
     suggestions = _suggest_values(doc_id, "unloading_address")
-    rows = []
-    for idx, x in enumerate(suggestions):
-        txt = f"📍 {x}"
-        if len(txt) > 35:
-            txt = txt[:32] + "..."
-        rows.append([{"text": txt, "callback_data": f"set_unload:{doc_id}:{idx}"}])
+    rows = [[{"text": f"📍 {x}", "callback_data": f"set_unload:{doc_id}:{idx}"}] for idx, x in enumerate(suggestions)]
     rows.append([{"text": "✍️ Свой вариант", "callback_data": f"field:{doc_id}:unloading_address"}])
     rows.append([{"text": "⬅️ Назад", "callback_data": f"back:{doc_id}"}])
     return {"inline_keyboard": rows}
@@ -194,12 +189,7 @@ def build_unload_kb(doc_id):
 
 def build_carrier_kb(doc_id):
     suggestions = _suggest_values(doc_id, "carrier_name")
-    rows = []
-    for idx, x in enumerate(suggestions):
-        txt = f"🚚 {x}"
-        if len(txt) > 35:
-            txt = txt[:32] + "..."
-        rows.append([{"text": txt, "callback_data": f"set_carrier:{doc_id}:{idx}"}])
+    rows = [[{"text": f"🚚 {x}", "callback_data": f"set_carrier:{doc_id}:{idx}"}] for idx, x in enumerate(suggestions)]
     rows.append([{"text": "✍️ Свой вариант", "callback_data": f"field:{doc_id}:carrier_name"}])
     rows.append([{"text": "⬅️ Назад", "callback_data": f"back:{doc_id}"}])
     return {"inline_keyboard": rows}
@@ -244,10 +234,16 @@ def _render_doc(chat_id, doc_id, mid):
     _show_message(chat_id, mid, format_for_driver(doc_id, doc.get("ocr_data", {}), True, "", 1.0), build_main_kb(doc_id))
 
 
-def handle_callback(chat_id, data, callback_id, mid):
-    print(f"🔹 [DEBUG] handle_callback: data={data}, chat_id={chat_id}", flush=True)
-    answer_max_callback(callback_id)
+def _extract_doc_id_from_payload(payload):
+    try:
+        return int(str(payload).split(":")[1])
+    except (ValueError, IndexError, TypeError):
+        return None
 
+
+def handle_callback(chat_id, data, callback_id, mid):
+    started = time.monotonic()
+    answer_max_callback(callback_id)
     try:
         if data.startswith("menu_op:"):
             doc_id = int(data.split(":")[1])
@@ -348,34 +344,60 @@ def handle_callback(chat_id, data, callback_id, mid):
 
             edit_max_message(mid, "🚀 Отправляю в Битрикс24...")
             rds.rpush("tasks", json.dumps({"type": "bitrix_export", "platform": "max", "chat_id": str(chat_id), "doc_id": doc_id, "mid": mid}))
+    except Exception as exc:
+        print(f"❌ Callback handling failed for payload '{data}': {exc}", flush=True)
+        doc_id = _extract_doc_id_from_payload(data)
+        reply_markup = build_main_kb(doc_id) if doc_id is not None else None
+        _show_message(chat_id, mid, "⚠️ Произошла ошибка обработки кнопки. Попробуйте ещё раз.", reply_markup)
+    finally:
+        elapsed = time.monotonic() - started
+        if elapsed > 3:
+            print(f"⚠️ Slow callback ({elapsed:.2f}s) payload='{data}' chat_id={chat_id}", flush=True)
 
-    except Exception as e:
-        print(f"❌ [DEBUG] Ошибка в handle_callback: {e}", flush=True)
-        traceback.print_exc()
-        send_max_message(chat_id, f"⚠️ Ошибка обработки кнопки: {e}")
 
+
+def _normalize_callback_payload(payload):
+    if payload is None:
+        return None
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("payload", "data", "value", "text"):
+            val = payload.get(key)
+            if isinstance(val, str) and val:
+                return val
+    return str(payload)
+
+
+def _extract_callback_meta(update):
+    callback = update.get("callback") if isinstance(update, dict) else None
+    callback = callback if isinstance(callback, dict) else {}
+
+    payload = _normalize_callback_payload(callback.get("payload"))
+    if not payload:
+        payload = _normalize_callback_payload(callback.get("data"))
+    if not payload:
+        payload = _normalize_callback_payload(callback.get("value"))
+
+    callback_id = callback.get("callback_id") or callback.get("id") or update.get("callback_id")
+    chat_id = update.get("message", {}).get("recipient", {}).get("chat_id") or update.get("chat_id")
+    mid = update.get("message", {}).get("body", {}).get("mid")
+    return chat_id, payload, callback_id, mid
 
 def process_update(update):
     print(f"🔍 [DEBUG] Получен апдейт: {json.dumps(update, ensure_ascii=False)}", flush=True)
     update_type = update.get("update_type")
     
     if update_type == "message_callback":
-        cb = update.get("callback", {})
-        # Расширенная логика поиска chat_id
-        chat_id = update.get("message", {}).get("recipient", {}).get("chat_id")
-        
-        # Если в стандартном месте нет, ищем в корне или внутри callback (зависит от версии API)
-        if not chat_id:
-            print("⚠️ [DEBUG] chat_id не найден в message.recipient.chat_id, ищу варианты...", flush=True)
-            # Иногда chat_id приходит как user_id в корне
-            chat_id = update.get("chat_id")
-
-        if chat_id and cb.get("payload"):
-            mid = update.get("message", {}).get("body", {}).get("mid")
-            print(f"✅ [DEBUG] Запуск потока handle_callback для {chat_id}, payload={cb.get('payload')}", flush=True)
-            threading.Thread(target=handle_callback, args=(chat_id, cb.get("payload"), cb.get("callback_id"), mid)).start()
+        chat_id, payload, callback_id, mid = _extract_callback_meta(update)
+        if chat_id and payload:
+            threading.Thread(
+                target=handle_callback,
+                args=(chat_id, payload, callback_id, mid),
+                daemon=True,
+            ).start()
         else:
-            print(f"⚠️ [DEBUG] Пропущен callback: chat_id={chat_id}, payload={cb.get('payload')}", flush=True)
+            print(f"⚠️ Ignored callback update with missing data: {update}", flush=True)
         return
 
     if update_type not in ["message_created", "bot_started"]:
