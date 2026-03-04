@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 import json, redis, os, requests, threading, time
+from concurrent.futures import ThreadPoolExecutor
 from app.db import get_doc, update_field, add_operation_event, remove_last_operation_event, clear_operation_events
 from app.formatting import format_for_driver
 
@@ -13,6 +14,7 @@ EDIT_STATE = {}
 
 FILE_BUFFER = {}
 BUFFER_LOCK = threading.Lock()
+CALLBACK_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("MAX_CALLBACK_WORKERS", "8")))
 
 
 def flush_buffer(chat_id):
@@ -118,13 +120,6 @@ def answer_max_callback(callback_id):
         requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json={}, headers=HEADERS, timeout=1.5)
     except Exception:
         pass
-
-
-def _answer_max_callback_async(callback_id):
-    if not callback_id:
-        return
-    threading.Thread(target=answer_max_callback, args=(callback_id,), daemon=True).start()
-
 
 
 def _suggest_values(doc_id, field):
@@ -238,7 +233,7 @@ def _extract_doc_id_from_payload(payload):
 
 def handle_callback(chat_id, data, callback_id, mid):
     started = time.monotonic()
-    _answer_max_callback_async(callback_id)
+    answer_max_callback(callback_id)
     try:
         if data.startswith("menu_op:"):
             doc_id = int(data.split(":")[1])
@@ -384,11 +379,7 @@ def process_update(update):
     if update_type == "message_callback":
         chat_id, payload, callback_id, mid = _extract_callback_meta(update)
         if chat_id and payload:
-            threading.Thread(
-                target=handle_callback,
-                args=(chat_id, payload, callback_id, mid),
-                daemon=True,
-            ).start()
+            CALLBACK_EXECUTOR.submit(handle_callback, chat_id, payload, callback_id, mid)
         else:
             print(f"⚠️ Ignored callback update with missing data: {update}", flush=True)
         return
@@ -461,10 +452,14 @@ def polling_loop():
                 if "marker" in data:
                     marker = data["marker"]
                 for u in data.get("updates", []):
-                    process_update(u)
+                    try:
+                        process_update(u)
+                    except Exception as exc:
+                        print(f"❌ Failed to process update: {exc}; update={u}", flush=True)
             else:
                 time.sleep(2)
-        except Exception:
+        except Exception as exc:
+            print(f"❌ Polling loop error: {exc}", flush=True)
             time.sleep(5)
 
 
