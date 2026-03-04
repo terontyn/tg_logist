@@ -79,9 +79,35 @@ def delete_max_message(mid):
     except: pass
 
 def answer_max_callback(callback_id, notification_text=None):
-    if not callback_id or not notification_text: return
-    try: requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json={"notification": notification_text}, headers=HEADERS, timeout=5)
+    if not callback_id: return
+    body = {"notification": notification_text} if notification_text else {}
+    try: requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json=body, headers=HEADERS, timeout=5)
     except: pass
+
+def normalize_callback_payload(payload):
+    if isinstance(payload, str):
+        payload = payload.strip()
+        if not payload:
+            return None
+        try:
+            loaded = json.loads(payload)
+            if isinstance(loaded, str):
+                return loaded
+            if isinstance(loaded, dict):
+                return normalize_callback_payload(loaded)
+        except Exception:
+            return payload
+        return payload
+
+    if isinstance(payload, dict):
+        for key in ("payload", "callback_data", "data", "value"):
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        for val in payload.values():
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return None
 
 def build_main_kb(doc_id, missing_carrier):
     kb = []
@@ -104,6 +130,10 @@ def build_edit_kb(doc_id):
     ]}
 
 def handle_callback(chat_id, data, callback_id, mid):
+    answer_max_callback(callback_id)
+    if not data:
+        return
+
     if data.startswith("edit:"):
         doc_id = int(data.split(":")[1])
         doc = get_doc(doc_id)
@@ -112,7 +142,7 @@ def handle_callback(chat_id, data, callback_id, mid):
             edit_max_message(mid, f"🛠 **Режим редактирования**\n\n{format_for_driver(doc_id, ocr, True, '', 1.0)}", reply_markup=build_edit_kb(doc_id))
         
     elif data.startswith("field:"):
-        _, did, field = data.split(":")
+        _, did, field = data.split(":", 2)
         if field == "carrier_name":
             prompt = "🚚 Введите Перевозчика:"
         elif field == "unloading_location":
@@ -150,7 +180,9 @@ def process_update(update):
     if update_type == "message_callback":
         cb = update.get("callback", {})
         chat_id = update.get("message", {}).get("recipient", {}).get("chat_id")
-        if chat_id and cb.get("payload"): threading.Thread(target=handle_callback, args=(chat_id, cb.get("payload"), cb.get("callback_id"), update.get("message", {}).get("body", {}).get("mid"))).start()
+        payload = normalize_callback_payload(cb.get("payload"))
+        if chat_id and payload:
+            threading.Thread(target=handle_callback, args=(chat_id, payload, cb.get("callback_id"), update.get("message", {}).get("body", {}).get("mid"))).start()
         return
 
     if update_type not in ["message_created", "bot_started"]: return
