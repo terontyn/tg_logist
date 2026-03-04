@@ -115,10 +115,15 @@ def answer_max_callback(callback_id):
     if not callback_id:
         return
     try:
-        requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json={}, headers=HEADERS, timeout=5)
+        requests.post(f"{MAX_API_URL}/answers", params={"callback_id": callback_id}, json={}, headers=HEADERS, timeout=1.5)
     except Exception:
         pass
 
+
+def _answer_max_callback_async(callback_id):
+    if not callback_id:
+        return
+    threading.Thread(target=answer_max_callback, args=(callback_id,), daemon=True).start()
 
 
 
@@ -233,7 +238,7 @@ def _extract_doc_id_from_payload(payload):
 
 def handle_callback(chat_id, data, callback_id, mid):
     started = time.monotonic()
-    answer_max_callback(callback_id)
+    _answer_max_callback_async(callback_id)
     try:
         if data.startswith("menu_op:"):
             doc_id = int(data.split(":")[1])
