@@ -224,108 +224,120 @@ def _render_doc(chat_id, doc_id, mid):
     _show_message(chat_id, mid, format_for_driver(doc_id, doc.get("ocr_data", {}), True, "", 1.0), build_main_kb(doc_id))
 
 
+def _extract_doc_id_from_payload(payload):
+    try:
+        return int(str(payload).split(":")[1])
+    except (ValueError, IndexError, TypeError):
+        return None
+
+
 def handle_callback(chat_id, data, callback_id, mid):
     answer_max_callback(callback_id)
+    try:
+        if data.startswith("menu_op:"):
+            doc_id = int(data.split(":")[1])
+            _show_message(chat_id, mid, "👇 Что именно произошло?", build_op_kb(doc_id))
 
-    if data.startswith("menu_op:"):
-        doc_id = int(data.split(":")[1])
-        _show_message(chat_id, mid, "👇 Что именно произошло?", build_op_kb(doc_id))
+        elif data.startswith("menu_unload:"):
+            doc_id = int(data.split(":")[1])
+            _show_message(chat_id, mid, "👇 Выберите локацию выгрузки или введите свою:", build_unload_kb(doc_id))
 
-    elif data.startswith("menu_unload:"):
-        doc_id = int(data.split(":")[1])
-        _show_message(chat_id, mid, "👇 Выберите локацию выгрузки или введите свою:", build_unload_kb(doc_id))
+        elif data.startswith("menu_carrier:"):
+            doc_id = int(data.split(":")[1])
+            _show_message(chat_id, mid, "👇 Выберите наименование перевозчика или введите своё:", build_carrier_kb(doc_id))
 
-    elif data.startswith("menu_carrier:"):
-        doc_id = int(data.split(":")[1])
-        _show_message(chat_id, mid, "👇 Выберите наименование перевозчика или введите своё:", build_carrier_kb(doc_id))
+        elif data.startswith("set_unload:"):
+            _, did, raw_idx = data.split(":", 2)
+            doc_id = int(did)
+            suggestions = _suggest_values(doc_id, "unloading_address")
+            try:
+                value = suggestions[int(raw_idx)]
+            except (ValueError, IndexError):
+                _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_unload_kb(doc_id))
+                return
+            update_field(doc_id, "unloading_address", value)
+            _render_doc(chat_id, doc_id, mid)
 
-    elif data.startswith("set_unload:"):
-        _, did, raw_idx = data.split(":", 2)
-        doc_id = int(did)
-        suggestions = _suggest_values(doc_id, "unloading_address")
-        try:
-            value = suggestions[int(raw_idx)]
-        except (ValueError, IndexError):
-            _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_unload_kb(doc_id))
-            return
-        update_field(doc_id, "unloading_address", value)
-        _render_doc(chat_id, doc_id, mid)
+        elif data.startswith("set_carrier:"):
+            _, did, raw_idx = data.split(":", 2)
+            doc_id = int(did)
+            suggestions = _suggest_values(doc_id, "carrier_name")
+            try:
+                value = suggestions[int(raw_idx)]
+            except (ValueError, IndexError):
+                _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_carrier_kb(doc_id))
+                return
+            update_field(doc_id, "carrier_name", value)
+            _render_doc(chat_id, doc_id, mid)
 
-    elif data.startswith("set_carrier:"):
-        _, did, raw_idx = data.split(":", 2)
-        doc_id = int(did)
-        suggestions = _suggest_values(doc_id, "carrier_name")
-        try:
-            value = suggestions[int(raw_idx)]
-        except (ValueError, IndexError):
-            _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_carrier_kb(doc_id))
-            return
-        update_field(doc_id, "carrier_name", value)
-        _render_doc(chat_id, doc_id, mid)
+        elif data.startswith("set_op:"):
+            _, did, op = data.split(":")
+            doc_id = int(did)
+            doc = get_doc(doc_id) or {}
+            ocr = doc.get("ocr_data") or {}
+            default_date = ocr.get("loading_date", {}).get("value", "")
+            _set_edit_state(
+                chat_id,
+                doc_id,
+                "operation_date",
+                mid,
+                f"📅 Введите дату для статуса '{op}' (ДД.ММ.ГГГГ).\nПо умолчанию: {default_date or '—'}\nОтправьте '+' чтобы оставить дату погрузки.",
+                pending_op_type=op,
+            )
 
-    elif data.startswith("set_op:"):
-        _, did, op = data.split(":")
-        doc_id = int(did)
-        doc = get_doc(doc_id) or {}
-        ocr = doc.get("ocr_data") or {}
-        default_date = ocr.get("loading_date", {}).get("value", "")
-        _set_edit_state(
-            chat_id,
-            doc_id,
-            "operation_date",
-            mid,
-            f"📅 Введите дату для статуса '{op}' (ДД.ММ.ГГГГ).\nПо умолчанию: {default_date or '—'}\nОтправьте '+' чтобы оставить дату погрузки.",
-            pending_op_type=op,
-        )
+        elif data.startswith("rm_last_op:"):
+            doc_id = int(data.split(":")[1])
+            remove_last_operation_event(doc_id)
+            _render_doc(chat_id, doc_id, mid)
 
-    elif data.startswith("rm_last_op:"):
-        doc_id = int(data.split(":")[1])
-        remove_last_operation_event(doc_id)
-        _render_doc(chat_id, doc_id, mid)
+        elif data.startswith("clear_ops:"):
+            doc_id = int(data.split(":")[1])
+            clear_operation_events(doc_id)
+            _render_doc(chat_id, doc_id, mid)
 
-    elif data.startswith("clear_ops:"):
-        doc_id = int(data.split(":")[1])
-        clear_operation_events(doc_id)
-        _render_doc(chat_id, doc_id, mid)
+        elif data.startswith("edit:"):
+            doc_id = int(data.split(":")[1])
+            _show_message(chat_id, mid, "🛠 **Выберите поле для исправления:**", build_edit_kb(doc_id))
 
-    elif data.startswith("edit:"):
-        doc_id = int(data.split(":")[1])
-        _show_message(chat_id, mid, "🛠 **Выберите поле для исправления:**", build_edit_kb(doc_id))
+        elif data.startswith("field:"):
+            _, did, field = data.split(":")
+            prompt_map = {
+                "carrier_name": "🚚 Введите Перевозчика (ИП...):",
+                "unloading_address": "📍 Введите Локацию выгрузки:",
+                "sender_address": "🏭 Введите Грузоотправителя:",
+                "loading_date": "📅 Введите Дату (ДД.ММ.ГГГГ):",
+                "operation_type": "✍️ Напишите свой статус:",
+                "operation_date": "📅 Введите дату статуса (ДД.ММ.ГГГГ):",
+            }
+            _set_edit_state(chat_id, int(did), field, mid, prompt_map.get(field, "✍️ Введите новое значение:"))
 
-    elif data.startswith("field:"):
-        _, did, field = data.split(":")
-        prompt_map = {
-            "carrier_name": "🚚 Введите Перевозчика (ИП...):",
-            "unloading_address": "📍 Введите Локацию выгрузки:",
-            "sender_address": "🏭 Введите Грузоотправителя:",
-            "loading_date": "📅 Введите Дату (ДД.ММ.ГГГГ):",
-            "operation_type": "✍️ Напишите свой статус:",
-            "operation_date": "📅 Введите дату статуса (ДД.ММ.ГГГГ):",
-        }
-        _set_edit_state(chat_id, int(did), field, mid, prompt_map.get(field, "✍️ Введите новое значение:"))
+        elif data.startswith("back:"):
+            doc_id = int(data.split(":")[1])
+            _render_doc(chat_id, doc_id, mid)
 
-    elif data.startswith("back:"):
-        doc_id = int(data.split(":")[1])
-        _render_doc(chat_id, doc_id, mid)
+        elif data.startswith("ok:"):
+            doc_id = int(data.split(":")[1])
+            doc = get_doc(doc_id)
+            ocr = doc.get("ocr_data") or {}
+            errors = []
+            if not ocr.get("carrier_name", {}).get("value"):
+                errors.append("Перевозчик")
+            if not ocr.get("unloading_address", {}).get("value"):
+                errors.append("Локация выгрузки")
+            if not ocr.get("operation_type", {}).get("value"):
+                errors.append("Статус")
 
-    elif data.startswith("ok:"):
-        doc_id = int(data.split(":")[1])
-        doc = get_doc(doc_id)
-        ocr = doc.get("ocr_data") or {}
-        errors = []
-        if not ocr.get("carrier_name", {}).get("value"):
-            errors.append("Перевозчик")
-        if not ocr.get("unloading_address", {}).get("value"):
-            errors.append("Локация выгрузки")
-        if not ocr.get("operation_type", {}).get("value"):
-            errors.append("Статус")
+            if errors:
+                edit_max_message(mid, f"⛔ **ЗАПОЛНИТЕ ПОЛЯ:** {', '.join(errors)}\n\n{format_for_driver(doc_id, ocr, True, '', 1.0)}", reply_markup=build_main_kb(doc_id))
+                return
 
-        if errors:
-            edit_max_message(mid, f"⛔ **ЗАПОЛНИТЕ ПОЛЯ:** {', '.join(errors)}\n\n{format_for_driver(doc_id, ocr, True, '', 1.0)}", reply_markup=build_main_kb(doc_id))
-            return
-
-        edit_max_message(mid, "🚀 Отправляю в Битрикс24...")
-        rds.rpush("tasks", json.dumps({"type": "bitrix_export", "platform": "max", "chat_id": str(chat_id), "doc_id": doc_id, "mid": mid}))
+            edit_max_message(mid, "🚀 Отправляю в Битрикс24...")
+            rds.rpush("tasks", json.dumps({"type": "bitrix_export", "platform": "max", "chat_id": str(chat_id), "doc_id": doc_id, "mid": mid}))
+    except Exception as exc:
+        print(f"❌ Callback handling failed for payload '{data}': {exc}", flush=True)
+        doc_id = _extract_doc_id_from_payload(data)
+        reply_markup = build_main_kb(doc_id) if doc_id is not None else None
+        _show_message(chat_id, mid, "⚠️ Произошла ошибка обработки кнопки. Попробуйте ещё раз.", reply_markup)
 
 
 def process_update(update):
@@ -334,7 +346,8 @@ def process_update(update):
         cb = update.get("callback", {})
         chat_id = update.get("message", {}).get("recipient", {}).get("chat_id")
         if chat_id and cb.get("payload"):
-            threading.Thread(target=handle_callback, args=(chat_id, cb.get("payload"), cb.get("callback_id"), update.get("message", {}).get("body", {}).get("mid"))).start()
+            callback_id = cb.get("callback_id") or cb.get("id")
+            handle_callback(chat_id, cb.get("payload"), callback_id, update.get("message", {}).get("body", {}).get("mid"))
         return
 
     if update_type not in ["message_created", "bot_started"]:
