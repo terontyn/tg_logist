@@ -17,6 +17,8 @@ def update_field(doc_id, field, value):
         ocr.setdefault("carrier_name", {})["value"] = value
     elif field == "sender_address":
         ocr.setdefault("sender_address", {})["value"] = value
+    elif field == "unloading_location":
+        ocr.setdefault("unloading_location", {})["value"] = value
     elif field == "loading_date":
         ocr.setdefault("loading_date", {})["value"] = value
     elif field == "driver_name":
