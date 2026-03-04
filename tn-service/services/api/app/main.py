@@ -1,12 +1,11 @@
 from fastapi import FastAPI
+import logging
 import json, redis, os, requests, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from app.db import get_doc, update_field, add_operation_event, remove_last_operation_event, clear_operation_events
 from app.formatting import format_for_driver
 
-# Включаем логирование
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("max_handler")
 
 app = FastAPI(title="TN Service Polling")
 rds = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
