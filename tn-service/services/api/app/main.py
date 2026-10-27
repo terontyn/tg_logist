@@ -85,7 +85,7 @@ def send_max_message(chat_id, text, reply_markup=None):
     if atts:
         body["attachments"] = atts
     try:
-        print(f"📤 [DEBUG] Отправка сообщения в {chat_id}: {text[:20]}...", flush=True)
+        print(f"📤 [DEBUG] Отправка сообщения в {chat_id}: {len(text)} символов", flush=True)
         resp = requests.post(f"{MAX_API_URL}/messages", params={"chat_id": chat_id}, json=body, headers=HEADERS, timeout=20)
         if not resp.ok:
             print(f"❌ [DEBUG] Ошибка отправки MAX: {resp.status_code} {resp.text}", flush=True)
@@ -263,7 +263,10 @@ def handle_callback(chat_id, data, callback_id, mid):
             doc_id = int(did)
             suggestions = _suggest_values(doc_id, "unloading_address")
             try:
-                value = suggestions[int(raw_idx)]
+                index = int(raw_idx)
+                if index < 0:
+                    raise IndexError("negative suggestion index")
+                value = suggestions[index]
             except (ValueError, IndexError):
                 _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_unload_kb(doc_id))
                 return
@@ -275,7 +278,10 @@ def handle_callback(chat_id, data, callback_id, mid):
             doc_id = int(did)
             suggestions = _suggest_values(doc_id, "carrier_name")
             try:
-                value = suggestions[int(raw_idx)]
+                index = int(raw_idx)
+                if index < 0:
+                    raise IndexError("negative suggestion index")
+                value = suggestions[index]
             except (ValueError, IndexError):
                 _show_message(chat_id, mid, "⚠️ Не удалось выбрать вариант. Нажмите кнопку ещё раз.", build_carrier_kb(doc_id))
                 return
@@ -381,20 +387,22 @@ def _extract_callback_meta(update):
         payload = _normalize_callback_payload(callback.get("value"))
 
     callback_id = callback.get("callback_id") or callback.get("id") or update.get("callback_id")
-    chat_id = update.get("message", {}).get("recipient", {}).get("chat_id") or update.get("chat_id")
-    mid = update.get("message", {}).get("body", {}).get("mid")
+    message = update.get("message") or {}
+    recipient = message.get("recipient") or {}
+    chat_id = recipient.get("chat_id") or update.get("chat_id")
+    mid = (message.get("body") or {}).get("mid")
     return chat_id, payload, callback_id, mid
 
 def process_update(update):
-    print(f"🔍 [DEBUG] Получен апдейт: {json.dumps(update, ensure_ascii=False)}", flush=True)
+    logging.info("MAX update type=%s", update.get("update_type"))
     update_type = update.get("update_type")
-    
+
     if update_type == "message_callback":
         chat_id, payload, callback_id, mid = _extract_callback_meta(update)
         if chat_id and payload:
             CALLBACK_EXECUTOR.submit(handle_callback, chat_id, payload, callback_id, mid)
         else:
-            print(f"⚠️ Ignored callback update with missing data: {update}", flush=True)
+            logging.warning("Ignored callback with missing metadata")
         return
 
     if update_type not in ["message_created", "bot_started"]:
@@ -469,7 +477,7 @@ def polling_loop():
                     try:
                         process_update(u)
                     except Exception as exc:
-                        print(f"❌ Failed to process update: {exc}; update={u}", flush=True)
+                        logging.error("Failed to process MAX update: %s", type(exc).__name__)
             else:
                 print(f"⚠️ [DEBUG] Ошибка polling: {resp.status_code} {resp.text}", flush=True)
                 time.sleep(2)

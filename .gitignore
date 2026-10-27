@@ -10,3 +10,6 @@ certs/
 *.key
 *.pem
 .DS_Store
+
+demo/.state.json
+demo/.state.tmp
