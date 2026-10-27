@@ -22,6 +22,8 @@ services:
   api:
     build: ./services/api
     container_name: tn_api
+    volumes:
+      - ./local-certs:/app/certs:ro
     env_file: .env
     depends_on:
       - postgres
